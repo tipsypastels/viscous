@@ -1,14 +1,13 @@
-use block2::RcBlock;
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
     runtime::ProtocolObject, sel,
 };
 use objc2_app_kit::{
-    NSApplication, NSApplicationDelegate, NSEventModifierFlags, NSMenu, NSMenuItem, NSStatusBar,
-    NSStatusItem, NSWorkspace, NSWorkspaceDidActivateApplicationNotification,
+    NSApplication, NSApplicationDelegate, NSEventModifierFlags, NSMenu, NSMenuDelegate, NSMenuItem,
+    NSStatusBar, NSStatusItem,
 };
-use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSOperationQueue, ns_string};
-use std::{cell::OnceCell, ptr::NonNull};
+use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, ns_string};
+use std::cell::OnceCell;
 
 fn main() {
     let mtm = MainThreadMarker::new().unwrap();
@@ -33,11 +32,19 @@ define_class! {
     struct AppDelegate;
 
     unsafe impl NSObjectProtocol for AppDelegate {}
+
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, notification: &NSNotification) {
             let _ = notification;
-            self.startup();
+            self.init_menu();
+        }
+    }
+
+    unsafe impl NSMenuDelegate for AppDelegate {
+        #[unsafe(method(menuWillOpen:))]
+        fn menu_will_open(&self, menu: &NSMenu) {
+            self.populate_menu(menu);
         }
     }
 }
@@ -48,9 +55,25 @@ impl AppDelegate {
         unsafe { msg_send![super(this), init] }
     }
 
-    fn startup(&self) {
+    fn init_menu(&self) {
         let mtm = self.mtm();
         let status_item = NSStatusBar::systemStatusBar().statusItemWithLength(-1.0);
+
+        let menu = NSMenu::new(mtm);
+
+        menu.setTitle(ns_string!("Viscous"));
+        menu.setDelegate(Some(ProtocolObject::from_ref(self)));
+
+        status_item.setMenu(Some(&menu));
+
+        let status_button = status_item.button(mtm).unwrap();
+        status_button.setTitle(ns_string!("🌯"));
+
+        self.ivars().status_item.set(status_item).unwrap();
+    }
+
+    fn populate_menu(&self, menu: &NSMenu) {
+        let mtm = self.mtm();
 
         let quit_item = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
@@ -62,34 +85,7 @@ impl AppDelegate {
         };
         quit_item.setKeyEquivalentModifierMask(NSEventModifierFlags::Command);
 
-        let menu = NSMenu::new(mtm);
-        menu.setTitle(ns_string!("Viscous"));
+        menu.removeAllItems();
         menu.addItem(&quit_item);
-
-        status_item.setMenu(Some(&menu));
-
-        let status_button = status_item.button(mtm).unwrap();
-        status_button.setTitle(ns_string!("🌯"));
-
-        self.ivars().status_item.set(status_item).unwrap();
-
-        let notification_center = NSWorkspace::sharedWorkspace().notificationCenter();
-        let notification_queue = NSOperationQueue::mainQueue();
-
-        let notification_handler = RcBlock::new(|_| {
-            let Some(app) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
-                return;
-            };
-            dbg!(app.localizedName());
-        });
-
-        unsafe {
-            notification_center.addObserverForName_object_queue_usingBlock(
-                Some(NSWorkspaceDidActivateApplicationNotification),
-                None,
-                Some(&notification_queue),
-                &notification_handler,
-            )
-        };
     }
 }
